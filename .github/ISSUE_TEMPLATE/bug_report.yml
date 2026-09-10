@@ -1,0 +1,39 @@
+name: Ошибка
+description: Сообщить о проблеме в приложении, сборке или установке
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Не прикладывайте пароли, токены, cookies, сертификаты, DUID или полные ссылки на видео.
+        Перед публикацией лога или снимка экрана удалите личные данные.
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения
+      placeholder: Например, 0.3.1
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Телевизор и среда
+      description: Модель и версия Tizen. Для проблемы сборки — ОС компьютера, версии Node.js, Python и Tizen Studio.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Что произошло
+      description: Ожидаемое поведение и фактический результат.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить
+      description: Последовательность действий и кнопки пульта.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Дополнительная информация
+      description: Текст ошибки или очищенный от личных данных лог, если есть.

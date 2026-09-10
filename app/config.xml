@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://soap4samsung.local/app" version="0.3.1" viewmodes="maximized">
+  <tizen:application id="Soap4TV001.Soap4Samsung" package="Soap4TV001" required_version="5.5" />
+  <content src="index.html" />
+  <name>Soap4Samsung</name>
+  <icon src="icon.png" />
+  <description>Каталог Soap4me, сериалы и фильмы с русской озвучкой.</description>
+  <access origin="*" subdomains="true" />
+  <tizen:profile name="tv-samsung" />
+  <tizen:feature name="http://tizen.org/feature/screen.size.normal.1080.1920" />
+  <tizen:privilege name="http://tizen.org/privilege/internet" />
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice" />
+  <tizen:privilege name="http://developer.samsung.com/privilege/appcommon" />
+  <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable" />
+  <tizen:metadata key="http://samsung.com/tv/metadata/screen.size" value="1920x1080" />
+  <tizen:content-security-policy>default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: http: data:; connect-src https: http:; media-src https: http: blob:; object-src *;</tizen:content-security-policy>
+</widget>

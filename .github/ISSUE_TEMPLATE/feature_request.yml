@@ -1,0 +1,17 @@
+name: Предложение
+description: Предложить улучшение
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу нужно решить
+      description: Опишите ситуацию при использовании приложения.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Предлагаемое поведение
+      description: Желательно сохранять минимальный интерфейс и быстрое управление пультом.
+    validations:
+      required: true
