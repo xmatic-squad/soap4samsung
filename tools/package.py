@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # Deliberately package only public application assets. New assets must be added
 # here explicitly; ignored files and a developer's local config cannot leak in.
 PUBLIC_FILES = (
-    "api.js", "config.xml", "icon.png", "icon.svg", "index.html", "main.js",
-    "player.js", "styles.css",
+    "api.js", "catalog.js", "config.xml", "icon.png", "icon.svg", "index.html", "main.js",
+    "player.js", "keyboard.js", "styles.css",
 )
 
 

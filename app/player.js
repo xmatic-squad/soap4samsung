@@ -22,6 +22,7 @@
     this.duration = 0;
     this.seekBusy = false;
     this.seekTarget = null;
+    this.seekHold = null;
     this.controlsTimer = null;
     this.controlsRevision = 0;
     this.prepareTimer = null;
@@ -282,6 +283,7 @@
   };
 
   SoapPlayer.prototype.setPaused = function (paused) {
+    this.resetHold();
     if (!this.active || !this.ready) return;
     if (this.pendingSeek) {
       this.pendingPause = paused;
@@ -334,6 +336,7 @@
       };
       var failed = function () {
         if (!self.active || self.generation !== generation) return;
+        self.resetHold();
         self.seekBusy = false;
         self.seekTarget = null;
         self._time(self.currentTime);
@@ -347,20 +350,58 @@
     this.seekTimer = setTimeout(applySeek, 250);
   };
 
-  SoapPlayer.prototype.handleKey = function (code) {
+  SoapPlayer.prototype.resetHold = function () {
+    this.seekHold = null;
+  };
+
+  SoapPlayer.prototype.handleKeyUp = function (code) {
+    if (this.seekHold && this.seekHold.code === code) this.resetHold();
+  };
+
+  SoapPlayer.prototype._seekKey = function (code, event) {
+    var direction = code === 37 || code === 412 ? -1 : 1;
+    var step = code === 412 || code === 417 ? 30000 : 10000;
+    if (!this.ready || !this.duration) { this.resetHold(); return; }
+    // Calls without a DOM event remain individual button presses. Remote
+    // repeat flags vary, so keyup and a short inactivity limit delimit a hold.
+    if (!event) { this.resetHold(); this.seek(direction * step); return; }
+    var now = Date.now();
+    var hold = this.seekHold;
+    if (!hold || hold.code !== code || now < hold.lastEvent || now - hold.lastEvent > 1200) {
+      hold = { code: code, started: now, lastEvent: now, lastStep: now - 500 };
+      this.seekHold = hold;
+    }
+    hold.lastEvent = now;
+    var elapsed = now - hold.started;
+    if (elapsed >= 15000) step = 300000;
+    else if (elapsed >= 9000) step = 120000;
+    else if (elapsed >= 5000) step = 60000;
+    else if (elapsed >= 2000) step = 30000;
+    // Bound preview movement independently of the TV's repeat frequency. Even
+    // skipped repeats renew the existing debounce, coalescing the held input.
+    if (now - hold.lastStep >= 500) {
+      hold.lastStep = now;
+      this.seek(direction * step);
+    } else if (this.seekTarget !== null) this.seek(0);
+    else this.showControls();
+  };
+
+  SoapPlayer.prototype.handleKey = function (code, event) {
     if (!this.active) return false;
+    var seekKey = code === 37 || code === 39 || code === 412 || code === 417;
+    if (!seekKey) this.resetHold();
     if (code === 10009 || code === 27 || code === 413) this.stop(true);
     else if (code === 13 || code === 32 || code === 10252) this.setPaused(!(this.pendingPause === null ? this.paused : this.pendingPause));
     else if (code === 415) this.setPaused(false);
     else if (code === 19) this.setPaused(true);
-    else if (code === 37 || code === 412) this.seek(code === 412 ? -30000 : -10000);
-    else if (code === 39 || code === 417) this.seek(code === 417 ? 30000 : 10000);
+    else if (seekKey) this._seekKey(code, event);
     else if (code === 38 || code === 40 || code === 457) this.showControls();
     else return false;
     return true;
   };
 
   SoapPlayer.prototype.stop = function (notify, message, reason) {
+    this.resetHold();
     var wasActive = this.active;
     this.generation++;
     this.controlsRevision++;

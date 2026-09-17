@@ -67,6 +67,7 @@ function harness() {
         setScreenSaver: function (value) { screenSaver.push(value); }
       }
     },
+    Date: {now: function () { return now; }},
     setTimeout: function (fn, delay) { var id = ++nextTimer; timers.set(id, {fn: fn, due: now + delay}); return id; },
     clearTimeout: function (id) { timers.delete(id); }
   };
@@ -331,6 +332,181 @@ test("held arrow keys coalesce and later seeks wait for the active seek callback
   h.sought(1);
   assert.equal(h.stops.length, 0);
   assert.equal(h.state(), "PLAYING");
+});
+
+test("held seeking accelerates by duration with a five minute step cap and bounded cadence", function () {
+  [37, 39].forEach(function (code) {
+    var h = harness();
+    h.start();
+    h.prepared();
+    h.player.duration = 72000000;
+    h.av.listener.oncurrentplaytime(36000000);
+    var direction = code === 37 ? -1 : 1;
+    h.player.handleKey(code, {repeat: false});
+    assert.equal(h.player.seekTarget, 36000000 + direction * 10000);
+    for (var elapsed = 100; elapsed <= 30000; elapsed += 100) {
+      var before = h.player.seekTarget;
+      h.tick(100);
+      // Native repeat flags are not required, including firmware reporting false.
+      h.player.handleKey(code, elapsed % 300 ? {repeat: false} : {});
+      var step = elapsed >= 15000 ? 300000 : elapsed >= 9000 ? 120000 :
+        elapsed >= 5000 ? 60000 : elapsed >= 2000 ? 30000 : 10000;
+      assert.equal(h.player.seekTarget - before, elapsed % 500 ? 0 : direction * step,
+        "Only one duration-based step per 500 ms, at " + elapsed + " ms");
+    }
+    assert.equal(h.seeks.length, 0, "Frequent repeats keep one coalesced seek preview");
+    var target = h.player.seekTarget;
+    h.player.handleKeyUp(code);
+    h.tick(249);
+    assert.equal(h.seeks.length, 0);
+    h.tick(1);
+    assert.equal(h.seeks.length, 1);
+    assert.equal(h.seeks[0].target, target);
+    h.sought(0);
+    assert.equal(h.player.seekTarget, null);
+    assert.equal(h.state(), "PLAYING");
+  });
+});
+
+test("slow suppressed repeats do not seek again after the previous seek already completed", function () {
+  var h = harness();
+  h.start();
+  h.prepared();
+  h.player.handleKey(39, {});
+  h.tick(250);
+  h.sought(0);
+  h.tick(50);
+  h.player.handleKey(39, {});
+  assert.equal(h.player.seekTarget, null, "A suppressed repeat does not create a new seek preview");
+  h.tick(300);
+  assert.equal(h.seeks.length, 1, "No redundant native seek at the current playback position");
+  h.player.handleKey(39, {});
+  assert.equal(h.player.seekTarget, 20000, "The next allowed repeat still advances normally");
+  h.tick(250);
+  assert.equal(h.seeks.length, 2);
+  assert.equal(h.seeks[1].target, 20000);
+  h.sought(1);
+});
+
+function holdKey(h, code, milliseconds) {
+  h.player.handleKey(code, {});
+  for (var elapsed = 100; elapsed <= milliseconds; elapsed += 100) {
+    h.tick(100);
+    h.player.handleKey(code, {});
+  }
+}
+
+test("releasing, changing keys and losing focus each restore precise single-step seeking", function () {
+  ["release", "direction", "media key", "other key", "blur", "pause"].forEach(function (mode) {
+    var h = harness();
+    h.start();
+    h.prepared();
+    h.av.listener.oncurrentplaytime(600000);
+    holdKey(h, 39, 2500);
+    var before = h.player.seekTarget;
+    var code = 39;
+    var delta = 10000;
+    if (mode === "release") h.player.handleKeyUp(39);
+    else if (mode === "direction") { code = 37; delta = -10000; }
+    else if (mode === "media key") { code = 417; delta = 30000; }
+    else if (mode === "other key") h.player.handleKey(38, {});
+    else if (mode === "blur") h.player.resetHold();
+    else h.player.setPaused(true);
+    h.player.handleKey(code, {});
+    assert.equal(h.player.seekTarget - before, delta, mode + " resets hold duration and cadence");
+    assert.equal(h.stops.length, 0);
+  });
+});
+
+test("rapid separate taps do not accelerate and unrelated keyup does not interrupt a hold", function () {
+  var h = harness();
+  h.start();
+  h.prepared();
+  for (var elapsed = 0; elapsed <= 3000; elapsed += 100) {
+    var before = h.player.seekTarget === null ? h.player.currentTime : h.player.seekTarget;
+    h.player.handleKey(39, {});
+    h.player.handleKeyUp(39);
+    assert.equal(h.player.seekTarget - before, 10000);
+    h.tick(100);
+  }
+  holdKey(h, 39, 2500);
+  var target = h.player.seekTarget;
+  h.player.handleKeyUp(37);
+  for (var repeat = 0; repeat < 5; repeat++) { h.tick(100); h.player.handleKey(39, {}); }
+  assert.equal(h.player.seekTarget - target, 30000, "Late keyup of another key cannot reset acceleration");
+});
+
+test("a missing keyup expires without runaway seeking and preparation never accumulates hold time", function () {
+  var h = harness();
+  h.start();
+  holdKey(h, 39, 10000);
+  assert.equal(h.player.seekHold, null);
+  h.prepared();
+  h.player.handleKey(39, {});
+  assert.equal(h.player.seekTarget, 10000, "Preparation input cannot accelerate the first playable seek");
+  holdKey(h, 39, 2500);
+  h.tick(1300);
+  assert.equal(h.seeks.length, 1);
+  h.sought(0);
+  var before = h.player.currentTime;
+  h.player.handleKey(39, {});
+  assert.equal(h.player.seekTarget - before, 10000, "Long gaps reset a missed release");
+  h.player.handleKeyUp(39);
+  h.tick(250);
+  h.sought(1);
+  h.tick(30000);
+  assert.equal(h.seeks.length, 2, "No timer continues moving the preview after key events stop");
+});
+
+test("accelerated seeking stays within playback bounds and native seek failures reset the hold", function () {
+  [37, 39].forEach(function (code) {
+    var h = harness();
+    h.start();
+    h.prepared();
+    h.av.listener.oncurrentplaytime(900000);
+    holdKey(h, code, 16000);
+    assert.equal(h.player.seekTarget, code === 37 ? 0 : h.player.duration - 1000);
+    h.tick(250);
+    h.sought(0, true);
+    assert.equal(h.player.seekHold, null);
+    assert.equal(h.player.seekTarget, null);
+    assert.equal(h.notices.length, 1);
+    h.player.handleKey(code, {});
+    assert.equal(h.player.seekTarget, 900000 + (code === 37 ? -10000 : 10000));
+    h.tick(250);
+    h.sought(1);
+    assert.equal(h.state(), "PLAYING");
+  });
+});
+
+test("accelerated repeats queue behind a native seek and cannot affect a replacement stream", function () {
+  var h = harness();
+  h.start("first");
+  h.prepared();
+  h.player.handleKey(39, {});
+  h.tick(250);
+  var callsBefore = h.calls.length;
+  holdKey(h, 39, 5500);
+  assert.equal(h.seeks.length, 1);
+  assert.equal(h.calls.length, callsBefore, "Repeats make no AVPlay call while its callback is pending");
+  assert.ok(h.player.seekTarget > 200000);
+  h.player.handleKey(13);
+  h.player.handleKey(10009);
+  h.start("second");
+  assert.equal(h.player.seekHold, null);
+  assert.equal(h.calls.length, callsBefore, "Pause, stop and replacement all wait for native completion");
+  h.sought(0);
+  h.prepared();
+  h.seeks[0].failure();
+  h.seeks[0].success();
+  assert.equal(h.state(), "PLAYING");
+  h.player.handleKey(39, {});
+  assert.equal(h.player.seekTarget, 10000, "A new stream starts with a precise step");
+  h.tick(250);
+  assert.equal(h.seeks.length, 2);
+  assert.equal(h.seeks[1].target, 10000);
+  h.sought(1);
+  assert.equal(h.count("pause"), 0, "A pause queued by the previous stream is discarded");
 });
 
 test("OK during pending seek pauses after completion without closing playback", function () {

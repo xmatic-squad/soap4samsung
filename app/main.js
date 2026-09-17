@@ -7,15 +7,21 @@
   var TOKEN_KEY = 'soap4samsung.token';
   var MY_SORT_KEY = 'soap4samsung.my-sort';
   var MOVIES_SORT_KEY = 'soap4samsung.movies-sort';
+  var ALL_SORT_KEY = 'soap4samsung.all-sort';
   var mySort = 'unwatched';
   var moviesSort = 'year';
+  var allSort = 'title';
+  var sortTrigger = null;
+  var sortEnterDown = false;
+  var backDown = false;
+  var SORT_LABELS = { unwatched: 'Сначала непросмотренные', title: 'По названию', year: 'По году: новые', imdb: 'По рейтингу IMDb', kinopoisk: 'По рейтингу КП', soap: 'По рейтингу Soap' };
   var api;
   var player;
+  var keyboard;
   var requestGeneration = 0;
   var playbackGeneration = 0;
   var playPending = false;
   var toastTimer;
-  var searchTimer;
   var lastBack = 0;
   var lastShowFocus = null;
   var lastEpisodeFocus = null;
@@ -45,7 +51,8 @@
     toastTimer = setTimeout(function () { el('toast').hidden = true; }, 5500);
   }
   function focus(item) {
-    if (!item) return;
+    if (!item || (keyboard && keyboard.active)) return;
+    if (sortTrigger && !el('sort-menu').contains(item)) return;
     item.focus();
     try { item.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (ignored) { /* Focus still works on older engines. */ }
     // Native scrollIntoView does not account for our fixed footer.
@@ -69,7 +76,7 @@
     if (key) item.setAttribute('data-focus', key);
     return item;
   }
-  function title(show) { return String(show.title_ru || show.title || show.title_original || show.soap_ru || show.soap || 'Без названия'); }
+  function title(show) { return window.SoapCatalog.title(show); }
   function showId(show) { return show.sid; }
   function qualityLabel(file) { return ({ 1: 'SD', 2: '720p', 3: 'Full HD', 4: '4K' })[Number(file.quality)] || 'Видео'; }
   function russianFile(files) { return api.chooseRussianFile(files); }
@@ -91,26 +98,76 @@
     return item;
   }
   function sortShows(shows, tab) {
-    return shows.slice().sort(function (a, b) {
-      if (tab === 'my' && mySort === 'unwatched') {
-        var difference = Math.max(0, Number(b.unwatched) || 0) - Math.max(0, Number(a.unwatched) || 0);
-        if (difference) return difference;
-      }
-      if (tab === 'movies' && moviesSort === 'year') {
-        var yearA = Number(a.year);
-        var yearB = Number(b.year);
-        yearA = isFinite(yearA) && yearA > 0 ? yearA : 0;
-        yearB = isFinite(yearB) && yearB > 0 ? yearB : 0;
-        if (yearA !== yearB) return yearB - yearA;
-      }
-      return title(a).localeCompare(title(b), 'ru', { sensitivity: 'base', numeric: true });
-    });
+    return window.SoapCatalog.sort(shows, tab === 'my' ? mySort : tab === 'movies' ? moviesSort : allSort);
   }
   function updateSortButton() {
-    el('sort-my').textContent = mySort === 'unwatched' ? 'Сначала непросмотренные' : 'По названию';
-    el('sort-my').setAttribute('aria-pressed', mySort === 'unwatched' ? 'true' : 'false');
-    el('sort-movies').textContent = moviesSort === 'year' ? 'Сначала новые' : 'По названию';
-    el('sort-movies').setAttribute('aria-pressed', moviesSort === 'year' ? 'true' : 'false');
+    el('sort-my').textContent = SORT_LABELS[mySort] + ' ▾';
+    el('sort-movies').textContent = SORT_LABELS[moviesSort] + ' ▾';
+    el('sort-all').textContent = SORT_LABELS[allSort] + ' ▾';
+  }
+  function closeSort(restoreFocus) {
+    var trigger = sortTrigger;
+    sortTrigger = null;
+    el('sort-menu').hidden = true;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    if (trigger && restoreFocus) focus(trigger);
+  }
+  function openSort() {
+    if (sortTrigger) { closeSort(true); return; }
+    var tab = state.tab;
+    var current = tab === 'my' ? mySort : tab === 'movies' ? moviesSort : allSort;
+    var modes = tab === 'my' ? ['unwatched', 'title', 'year', 'imdb', 'kinopoisk', 'soap'] : ['title', 'year', 'imdb', 'kinopoisk', 'soap'];
+    var menu = el('sort-menu');
+    clear(menu);
+    sortTrigger = el('sort-' + tab);
+    sortTrigger.setAttribute('aria-expanded', 'true');
+    var selected;
+    modes.forEach(function (mode) {
+      var option = button(SORT_LABELS[mode], 'sort-option', function () {
+        if (tab === 'my') mySort = mode;
+        else if (tab === 'movies') moviesSort = mode;
+        else allSort = mode;
+        storageSet(tab === 'my' ? MY_SORT_KEY : tab === 'movies' ? MOVIES_SORT_KEY : ALL_SORT_KEY, mode);
+        state[tab].page = 0;
+        updateSortButton();
+        if (state[tab].shows) {
+          state[tab].shows = sortShows(state[tab].shows, tab);
+          renderShows(null, true);
+        }
+        closeSort(true);
+      }, 'sort-option-' + mode);
+      option.setAttribute('role', 'menuitemradio');
+      option.setAttribute('aria-checked', mode === current ? 'true' : 'false');
+      menu.appendChild(option);
+      if (mode === current) selected = option;
+    });
+    menu.hidden = false;
+    focus(selected || menu.firstChild);
+  }
+  function sortKey(event, code) {
+    if (!sortTrigger) return false;
+    if (code === 27 || code === 10009) closeSort(true);
+    else if ((code >= 37 && code <= 40) || code === 9) {
+      var options = Array.prototype.slice.call(el('sort-menu').querySelectorAll('button'));
+      var index = options.indexOf(document.activeElement);
+      var direction = code === 37 || code === 38 || (code === 9 && event.shiftKey) ? -1 : 1;
+      focus(options[(index + direction + options.length) % options.length]);
+    } else return false;
+    event.preventDefault();
+    return true;
+  }
+  function ratingBadges(show) {
+    var badges = window.SoapCatalog.ratingBadges(show);
+    if (!badges.length) return null;
+    var group = node('span', 'rating-badges');
+    badges.forEach(function (rating) {
+      var badge = node('span', 'rating-badge rating-' + rating.source);
+      badge.appendChild(node('span', 'rating-source', rating.label));
+      badge.appendChild(node('span', 'rating-value', rating.text));
+      badge.setAttribute('aria-label', (rating.source === 'kinopoisk' ? 'Кинопоиск' : rating.source === 'soap' ? 'Soap4me' : 'IMDb') + ': ' + rating.text + ' из 10');
+      group.appendChild(badge);
+    });
+    return group;
   }
   function updateDetailActions() {
     var detail = state.detail;
@@ -138,6 +195,8 @@
   function isAuthError(error) { return error && (error.code === 'AUTH_REQUIRED' || error.status === 401 || error.status === 403); }
 
   function showLogin(message) {
+    closeSort(false);
+    if (keyboard) keyboard.close(false, false);
     requestGeneration++;
     playbackGeneration++;
     playPending = false;
@@ -218,6 +277,7 @@
   }
 
   function libraryHeading() {
+    closeSort(false);
     el('login-view').hidden = true;
     el('library-view').hidden = false;
     el('navigation').hidden = false;
@@ -231,14 +291,21 @@
     el('library-tools').hidden = !!state.detail;
     el('sort-my').hidden = !!state.detail || state.tab !== 'my';
     el('sort-movies').hidden = !!state.detail || state.tab !== 'movies';
+    el('sort-all').hidden = !!state.detail || state.tab !== 'all';
     updateSortButton();
     updateDetailActions();
     el('section-title').textContent = state.detail ? title(state.detail.show) : state.tab === 'my' ? 'Мои сериалы' : state.tab === 'movies' ? 'Фильмы' : 'Каталог';
-    el('search').value = state[state.tab].query;
+    updateSearchButton();
+  }
+
+  function updateSearchButton() {
+    var query = state[state.tab].query;
+    el('search').textContent = query || 'Поиск по названию';
+    el('search').classList.toggle('has-query', !!query);
+    el('search').setAttribute('aria-label', query ? 'Поиск: ' + query + '. Изменить запрос' : 'Поиск по названию');
   }
 
   function openLibrary(tab, force, restoreFocus) {
-    clearTimeout(searchTimer);
     state.tab = tab;
     state.detail = null;
     var generation = ++requestGeneration;
@@ -278,9 +345,9 @@
 
   function renderShows(restoreFocus, keepFocus) {
     var data = state[state.tab];
-    var query = data.query.toLowerCase().replace(/ё/g, 'е').trim();
+    var query = data.query.trim();
     var shows = (data.shows || []).filter(function (show) {
-      return !query || (String(show.title_ru || '') + ' ' + String(show.title || '') + ' ' + String(show.title_original || '')).toLowerCase().replace(/ё/g, 'е').indexOf(query) !== -1;
+      return window.SoapCatalog.matches(show, query);
     });
     data.page = Math.min(data.page, Math.max(0, Math.ceil(shows.length / PAGE_SIZE) - 1));
     el('section-summary').textContent = query ? 'Найдено: ' + shows.length : (state.tab === 'movies' ? 'Фильмов: ' : 'Сериалов: ') + shows.length;
@@ -298,6 +365,8 @@
       card.setAttribute('aria-label', title(show));
       var cover = show.covers && (show.covers.small || show.covers.big);
       card.appendChild(poster(cover, title(show).slice(0, 1)));
+      var ratings = ratingBadges(show);
+      if (ratings) card.appendChild(ratings);
       var copy = node('span', 'show-copy');
       copy.appendChild(node('span', 'show-title', title(show)));
       var meta = [];
@@ -367,6 +436,8 @@
     var cover = movie.covers || source.covers || {};
     var artwork = node('div', 'movie-artwork');
     artwork.appendChild(poster(cover.big || cover.small, title(source).slice(0, 1)));
+    var ratings = ratingBadges(movie);
+    if (ratings) artwork.appendChild(ratings);
     layout.appendChild(artwork);
     var info = node('div', 'movie-info');
     var description = plainDescription(movie.description || source.description);
@@ -659,7 +730,27 @@
 
   function keydown(event) {
     var code = event.keyCode || event.which;
-    if (player.handleKey(code)) { event.preventDefault(); return; }
+    if (code === 27 || code === 10009) {
+      if (backDown) { event.preventDefault(); return; }
+      backDown = true;
+    }
+    if (keyboard.handleKey(event)) return;
+    if ((code === 13 || code === 32) && (sortTrigger || (document.activeElement && document.activeElement.classList.contains('sort-button')))) {
+      event.preventDefault();
+      if (!sortEnterDown && !event.repeat) {
+        sortEnterDown = true;
+        if (sortTrigger) document.activeElement.click();
+        else openSort();
+      }
+      return;
+    }
+    if (sortKey(event, code)) return;
+    if (code === 13 && document.activeElement === el('search') && !state.detail && !playPending && !player.active) {
+      event.preventDefault();
+      if (!event.repeat && !keyboard.enterDown) keyboard.open(state[state.tab].query, el('search'), true);
+      return;
+    }
+    if (player.handleKey(code, event)) { event.preventDefault(); return; }
     if (code === 10009 || code === 27) { event.preventDefault(); back(); return; }
     if (playPending) { event.preventDefault(); return; }
     var isInput = document.activeElement && document.activeElement.tagName === 'INPUT';
@@ -683,14 +774,18 @@
       el('login-version').textContent = 'v' + version;
       el('login-version').hidden = false;
     }
-    if (!window.SoapApi || !window.SoapPlayer) {
+    if (!window.SoapApi || !window.SoapPlayer || !window.SoapKeyboard || !window.SoapCatalog) {
       el('login-view').hidden = false;
       el('login-error').textContent = 'Приложение загружено не полностью. Переустановите пакет.';
       return;
     }
     var token = storageGet(TOKEN_KEY) || '';
-    mySort = storageGet(MY_SORT_KEY) === 'title' ? 'title' : 'unwatched';
-    moviesSort = storageGet(MOVIES_SORT_KEY) === 'title' ? 'title' : 'year';
+    var savedMySort = storageGet(MY_SORT_KEY);
+    var savedMoviesSort = storageGet(MOVIES_SORT_KEY);
+    var savedAllSort = storageGet(ALL_SORT_KEY);
+    mySort = Object.prototype.hasOwnProperty.call(SORT_LABELS, savedMySort) ? savedMySort : 'unwatched';
+    moviesSort = ['title', 'year', 'imdb', 'kinopoisk', 'soap'].indexOf(savedMoviesSort) !== -1 ? savedMoviesSort : 'year';
+    allSort = ['title', 'year', 'imdb', 'kinopoisk', 'soap'].indexOf(savedAllSort) !== -1 ? savedAllSort : 'title';
     api = new window.SoapApi({ baseUrl: config.apiBase, siteBaseUrl: config.siteBase, token: token });
     player = new window.SoapPlayer({
       onStart: function () {
@@ -717,28 +812,7 @@
     el('nav-movies').addEventListener('click', function () { openLibrary('movies'); });
     el('mark-show').addEventListener('click', function () { markWatched('show'); });
     el('mark-season').addEventListener('click', function () { markWatched('season'); });
-    el('sort-my').addEventListener('click', function () {
-      mySort = mySort === 'unwatched' ? 'title' : 'unwatched';
-      storageSet(MY_SORT_KEY, mySort);
-      state.my.page = 0;
-      updateSortButton();
-      if (state.my.shows) {
-        state.my.shows = sortShows(state.my.shows, 'my');
-        renderShows(null, true);
-      }
-      focus(el('sort-my'));
-    });
-    el('sort-movies').addEventListener('click', function () {
-      moviesSort = moviesSort === 'year' ? 'title' : 'year';
-      storageSet(MOVIES_SORT_KEY, moviesSort);
-      state.movies.page = 0;
-      updateSortButton();
-      if (state.movies.shows) {
-        state.movies.shows = sortShows(state.movies.shows, 'movies');
-        renderShows(null, true);
-      }
-      focus(el('sort-movies'));
-    });
+    ['my', 'all', 'movies'].forEach(function (tab) { el('sort-' + tab).addEventListener('click', openSort); });
     el('refresh').addEventListener('click', function () {
       if (state.detail && state.detail.kind === 'movie') openMovie(state.detail.show);
       else if (state.detail) openShow(state.detail.show);
@@ -754,21 +828,29 @@
       state.detail = null;
       showLogin();
     });
-    el('search').addEventListener('input', function () {
-      state[state.tab].query = el('search').value;
+    keyboard = new window.SoapKeyboard({ onApply: function (query) {
+      state[state.tab].query = query;
       state[state.tab].page = 0;
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(function () { if (!state.detail && state[state.tab].shows) renderShows(null, true); }, 120);
-    });
-    el('search').addEventListener('keydown', function (event) {
-      if (event.keyCode === 13) {
-        event.preventDefault();
-        clearTimeout(searchTimer);
-        renderShows();
-      }
+      updateSearchButton();
+      if (state[state.tab].shows) renderShows(null, true);
+    } });
+    el('search').addEventListener('click', function () {
+      if (!state.detail && !playPending && !player.active && !keyboard.enterDown) keyboard.open(state[state.tab].query, el('search'), false);
     });
     document.addEventListener('keydown', keydown);
+    document.addEventListener('keyup', function (event) {
+      keyboard.handleKeyUp(event);
+      player.handleKeyUp(event.keyCode || event.which);
+      var code = event.keyCode || event.which;
+      if (code === 13 || code === 32) sortEnterDown = false;
+      if (code === 27 || code === 10009) backDown = false;
+    });
+    document.addEventListener('click', function (event) {
+      if (sortTrigger && event.target !== sortTrigger && !el('sort-menu').contains(event.target)) closeSort(false);
+    });
+    window.addEventListener('blur', function () { player.resetHold(); keyboard.handleBlur(); sortEnterDown = false; backDown = false; });
     document.addEventListener('visibilitychange', function () {
+      if (document.hidden) { keyboard.close(false); closeSort(false); player.resetHold(); }
       // Returning to the series list avoids an AVPlay session left in an invalid state after Home.
       if (document.hidden && (player.active || playPending)) {
         playbackGeneration++;
