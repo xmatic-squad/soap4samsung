@@ -56,13 +56,18 @@
   }
   function record(value) {
     if (!object(value) || ["unwatched", "progress", "watched"].indexOf(value.status) === -1) return null;
-    return {
+    var result = {
       status: value.status,
       positionMs: value.status === "progress" ? number(value.positionMs) : 0,
       durationMs: number(value.durationMs),
       updatedAt: number(value.updatedAt)
     };
+    if (value.status === "progress" && value.unset === true) result.unset = true;
+    return result;
   }
+  // A position alone says nothing about the watched state; only explicit marks
+  // and completed playback override the service.
+  function following(saved) { return saved.status === "progress" && !saved.unset; }
   function serverWatched(value) { return value === true || value === 1 || value === "1"; }
   function quotaError(error) {
     return error && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED" || error.code === 22 || error.code === 1014);
@@ -146,7 +151,7 @@
     var correction = 0;
     Object.keys(doc.serverWatched).forEach(function (key) {
       var local = doc.episodes[key];
-      if (local) correction += (local.status === "watched" ? 1 : 0) - (doc.serverWatched[key] ? 1 : 0);
+      if (local && !following(local)) correction += (local.status === "watched" ? 1 : 0) - (doc.serverWatched[key] ? 1 : 0);
     });
     doc.adjustment = correction;
   }
@@ -265,9 +270,13 @@
           reduced[victim.type][victim.name].card = minimal;
         } else {
           var saved = victim.type === "episode" ? reduced.episodes[victim.name] : reduced.record;
-          saved.status = "unwatched";
-          saved.positionMs = 0;
-          saved.durationMs = 0;
+          if (saved.unset) {
+            saved.status = "unwatched";
+            saved.positionMs = 0;
+            delete saved.unset;
+          } else if (victim.type === "episode") delete reduced.episodes[victim.name];
+          else delete reduced.record;
+          if (victim.type === "episode") adjust(reduced);
         }
         if (victim.key !== key) {
           var reducedRaw = JSON.stringify(reduced);
@@ -300,7 +309,10 @@
     var position = number(snapshot.positionMs);
     var duration = number(snapshot.durationMs);
     var watched = snapshot.ended === true || (duration > 0 && position / duration >= 0.9 && number(snapshot.playedSinceSeekMs) >= 30000);
-    var saved = {status: watched ? "watched" : position > 0 ? "progress" : "unwatched", positionMs: watched ? 0 : position, durationMs: duration, updatedAt: this._stamp()};
+    // A failed resume seek reports 0 before the first tick; keep the known position.
+    if (!watched && position === 0 && previous) return copy(previous);
+    var saved = {status: watched ? "watched" : "progress", positionMs: watched ? 0 : position, durationMs: duration, updatedAt: this._stamp()};
+    if (!watched && previous && (previous.status === "unwatched" || previous.unset)) saved.unset = true;
     putRecord(doc, info, saved);
     attachCard(doc, info, item);
     this._write(info.key, doc);
@@ -341,7 +353,7 @@
   };
   SoapStore.prototype.effectiveWatched = function (media, watched) {
     var saved = this.get(media);
-    return saved ? saved.status === "watched" : serverWatched(watched);
+    return saved && !following(saved) ? saved.status === "watched" : serverWatched(watched);
   };
   SoapStore.prototype.resumeMs = function (media, serverStartFromSec) {
     var saved = this.get(media);
@@ -417,13 +429,17 @@
     var doc = this._read(key);
     if (!doc.card) return null;
     if (doc.episodes) {
-      var names = Object.keys(doc.episodes).filter(function (name) { return doc.episodes[name].status === "progress"; });
+      // The newest activity wins: a finished episode means "go on to the next one".
+      var names = Object.keys(doc.episodes).filter(function (name) {
+        var saved = doc.episodes[name];
+        return (saved.status === "progress" && saved.positionMs > 0) || saved.status === "watched";
+      });
       names.sort(function (a, b) { return doc.episodes[b].updatedAt - doc.episodes[a].updatedAt; });
       if (!names.length) return null;
       var parts = names[0].split(":");
       return {card: copy(doc.card), media: {kind: "episode", sid: doc.card.sid, season: Number(parts[0]), episode: Number(parts[1])}, record: copy(doc.episodes[names[0]])};
     }
-    return doc.record && doc.record.status === "progress" ? {card: copy(doc.card), media: {kind: "movie", id: doc.card.id}, record: copy(doc.record)} : null;
+    return doc.record && doc.record.status === "progress" && doc.record.positionMs > 0 ? {card: copy(doc.card), media: {kind: "movie", id: doc.card.id}, record: copy(doc.record)} : null;
   };
   SoapStore.prototype.continueList = function (kind, limit) {
     if (!kindValid(kind)) return [];

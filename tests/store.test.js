@@ -60,7 +60,7 @@ test("threshold requires both 90 percent and thirty seconds since the last seek"
 test("ended marks even with unknown duration, but truthy non-booleans do not", function () {
   var f = fixture();
   var media = movie(1);
-  assert.equal(f.store.saveProgress(media, {ended: "true"}).status, "unwatched");
+  assert.equal(f.store.saveProgress(media, {ended: "true"}).status, "progress");
   assert.equal(f.store.saveProgress(media, {ended: true}).status, "watched");
   assert.equal(f.store.saveProgress(movie(2), snapshot(100, 0, 30000)).status, "progress");
 });
@@ -75,7 +75,7 @@ test("repeated ended and late progress callbacks cannot downgrade or move watche
   assert.deepEqual(f.store.setWatched(media, true), watched);
   assert.equal(f.disk.writes.length, writes);
   assert.equal(f.store.nextEpisodeLabel(1), null);
-  assert.deepEqual(f.store.continueList("show", 6), []);
+  assert.equal(f.store.continueList("show", 6)[0].record.status, "watched");
 });
 
 test("manual unwatch overrides the server and survives reopening; only it lowers watched", function () {
@@ -120,12 +120,12 @@ test("bad snapshot types and server number strings remain finite and do not thro
   var f = fixture();
   [NaN, Infinity, -5, "bad", {}, true, "", null, undefined].forEach(function (value, index) {
     var saved = f.store.saveProgress(movie(index), snapshot(value, value, value));
-    assert.equal(saved.status, "unwatched");
+    assert.equal(saved.status, "progress");
     assert.equal(saved.positionMs, 0);
     assert.equal(saved.durationMs, 0);
   });
   assert.equal(f.store.saveProgress(movie(99), snapshot("90000", "100000", "30000")).status, "watched");
-  assert.equal(f.store.saveProgress(movie(100), null).status, "unwatched");
+  assert.equal(f.store.saveProgress(movie(100), null).status, "progress");
   assert.equal(f.store.effectiveWatched(movie(101), "0"), false);
 });
 
@@ -249,9 +249,9 @@ test("continue lists use snapshots, latest progress per show, limits and separat
   f.store.saveProgress(movie(1), snapshot(90000, 400000, 0), {id: 1, title: "Movie"});
   f.store.setWatched(episode(3, 1, 1), true, show(3));
   f.store.setWatched(episode(4, 1, 1), false, show(4));
-  assert.deepEqual(f.store.continueList("show", 6).map(function (entry) { return entry.media.sid; }), ["2", "1"]);
-  assert.deepEqual(f.store.continueList("show", 1)[0].media, episode("2", 1, 1));
-  assert.equal(f.store.continueList("show", 6)[1].card.title, "Latest");
+  assert.deepEqual(f.store.continueList("show", 6).map(function (entry) { return entry.media.sid; }), ["3", "2", "1"]);
+  assert.deepEqual(f.store.continueList("show", 1)[0].media, episode("3", 1, 1));
+  assert.equal(f.store.continueList("show", 6)[2].card.title, "Latest");
   assert.equal(f.store.continueList("movie", 6)[0].card.title, "Movie");
   assert.deepEqual(f.store.nextEpisodeLabel("1"), {season: 2, episode: 3, positionMs: 80000, durationMs: 300000});
   f.store.setWatched(episode(1, 2, 3), true);
@@ -373,7 +373,7 @@ test("evictions preceding a failed mutation stay durable and cached reads agree 
   };
   assert.equal(f.store.setWatched(movie(2), true), null);
   assert.equal(f.errors.length, 1);
-  assert.equal(f.store.get(episode(1, 1, 1)).status, "unwatched");
+  assert.equal(f.store.get(episode(1, 1, 1)), null);
   assert.equal(f.store.nextEpisodeLabel(1), null);
   assert.equal(f.store.get(episode(1, 1, 2)).status, "watched");
   var reopened = new SoapStore({storage: f.disk});
@@ -466,4 +466,46 @@ test("unavailable storage reports write errors without throwing or inventing dat
   assert.deepEqual(store.continueList("movie", 6), []);
   assert.doesNotThrow(function () { store.reset(); });
   assert.equal(errors.length, 2);
+});
+
+test("rewatching an episode the service marks watched keeps it watched", function () {
+  var store = new SoapStore({storage: storage(), now: function () { return 1000; }});
+  var media = {kind: "episode", sid: 7, season: 1, episode: 2};
+  store.syncShowEpisodes(7, [{season: 1, episode: 2, watched: 1}]);
+  store.saveProgress(media, {positionMs: 90000, durationMs: 1000000, playedSinceSeekMs: 90000, ended: false});
+  assert.equal(store.effectiveWatched(media, 1), true);
+  assert.equal(store.adjustedUnwatched({sid: 7, unwatched: 0}), 0);
+  assert.equal(store.resumeMs(media, 0), 85000);
+});
+
+test("playback after an explicit unmark does not restore the service status", function () {
+  var store = new SoapStore({storage: storage()});
+  var media = {kind: "episode", sid: 7, season: 1, episode: 2};
+  store.setWatched(media, false);
+  store.saveProgress(media, {positionMs: 90000, durationMs: 1000000, playedSinceSeekMs: 90000, ended: false});
+  assert.equal(store.effectiveWatched(media, 1), false);
+  var reread = new SoapStore({storage: store.storage});
+  assert.equal(reread.effectiveWatched(media, 1), false);
+});
+
+test("a zero position neither creates a mark nor erases the saved position", function () {
+  var store = new SoapStore({storage: storage()});
+  var media = {kind: "movie", id: 3};
+  store.saveProgress(media, {positionMs: 0, durationMs: 1000, playedSinceSeekMs: 0, ended: false});
+  assert.equal(store.effectiveWatched(media, 1), true);
+  store.saveProgress(media, {positionMs: 120000, durationMs: 1000000, playedSinceSeekMs: 90000, ended: false});
+  store.saveProgress(media, {positionMs: 0, durationMs: 1000000, playedSinceSeekMs: 0, ended: false});
+  assert.equal(store.get(media).positionMs, 120000);
+});
+
+test("the show continue entry follows the newest activity, including a finished episode", function () {
+  var time = 100;
+  var store = new SoapStore({storage: storage(), now: function () { time += 1; return time; }});
+  var card = {sid: 7, title: "Synthetic", unwatched: 2};
+  store.saveProgress({kind: "episode", sid: 7, season: 1, episode: 1}, {positionMs: 90000, durationMs: 1000000, playedSinceSeekMs: 0, ended: false}, card);
+  store.saveProgress({kind: "episode", sid: 7, season: 1, episode: 2}, {positionMs: 1, durationMs: 1000000, playedSinceSeekMs: 0, ended: true}, card);
+  var list = store.continueList("show", 5);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].record.status, "watched");
+  assert.equal(list[0].media.episode, 2);
 });
