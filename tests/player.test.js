@@ -7,7 +7,7 @@ var vm = require("node:vm");
 
 // Model asynchronous AVPlay callbacks and its documented restriction that no
 // other AVPlay call may run while seekTo is pending. No network or TV required.
-function harness() {
+function harness(html5) {
   var elements = {};
   var timers = new Map();
   var now = 0;
@@ -15,6 +15,8 @@ function harness() {
   var calls = [];
   var stops = [];
   var stopReasons = [];
+  var stopSnapshots = [];
+  var progress = [];
   var notices = [];
   var screenSaver = [];
   var prepares = [];
@@ -28,6 +30,14 @@ function harness() {
     calls.push({name: name, args: Array.from(args || [])});
     if (seeking) throw new Error("InvalidAccessError: AVPlay operation during seekTo");
   }
+  var video = element("html-player");
+  video.currentTime = 0;
+  video.duration = 1800;
+  video.textTracks = [];
+  video.play = function () { state = "PLAYING"; };
+  video.pause = function () { state = "PAUSED"; };
+  video.removeAttribute = function () {};
+  video.load = function () {};
   var av = {
     streamInfo: [],
     open: function (url) { call("open", arguments); state = "IDLE"; },
@@ -61,7 +71,7 @@ function harness() {
   var context = {
     document: {getElementById: element},
     webapis: {
-      avplay: av,
+      avplay: html5 ? null : av,
       appcommon: {
         AppCommonScreenSaverState: {SCREEN_SAVER_ON: "ON", SCREEN_SAVER_OFF: "OFF"},
         setScreenSaver: function (value) { screenSaver.push(value); }
@@ -74,7 +84,8 @@ function harness() {
   context.window = context;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../app/player.js"), "utf8"), context);
   var player = new context.SoapPlayer({
-    onStop: function (message, reason) { stops.push(message); stopReasons.push(reason); },
+    onStop: function (message, reason, snapshot) { stops.push(message); stopReasons.push(reason); stopSnapshots.push(snapshot); },
+    onProgress: function (snapshot) { progress.push(snapshot); },
     onNotice: function (message) { notices.push(message); }
   });
   function tick(milliseconds) {
@@ -92,16 +103,398 @@ function harness() {
     now = end;
   }
   return {
-    player: player, av: av, calls: calls, stops: stops, stopReasons: stopReasons, notices: notices,
+    player: player, av: av, video: video, calls: calls, stops: stops, stopReasons: stopReasons,
+    stopSnapshots: stopSnapshots, progress: progress, notices: notices,
     screenSaver: screenSaver, prepares: prepares, seeks: seeks, element: element, tick: tick,
     timerCallback: function (id) { return timers.get(id).fn; },
+    timerCount: function () { return timers.size; },
     state: function () { return state; },
     start: function (name, resume) { player.start({stream: "https://example.invalid/" + (name || "episode") + ".mp4", start_from: resume || 0}, name); },
-    prepared: function () { state = "READY"; prepares[prepares.length - 1].success(); },
+    prepared: function () {
+      if (html5) { video.onloadedmetadata(); video.onplaying(); }
+      else { state = "READY"; prepares[prepares.length - 1].success(); }
+    },
+    time: function (milliseconds) {
+      if (html5) { video.currentTime = milliseconds / 1000; video.ontimeupdate(); }
+      else av.listener.oncurrentplaytime(milliseconds);
+    },
     sought: function (index, failed) { seeking = false; seeks[index][failed ? "failure" : "success"](); },
     count: function (name) { return calls.filter(function (entry) { return entry.name === name; }).length; }
   };
 }
+
+function assertSnapshot(actual, position, played, ended) {
+  assert.deepEqual(actual && Object.assign({}, actual), {
+    positionMs: position, durationMs: 1800000, playedSinceSeekMs: played, ended: !!ended
+  });
+}
+
+test("snapshots are cached copies and unavailable before readiness or without a duration", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    assert.equal(h.player.snapshot(), null);
+    h.start();
+    h.time(12000);
+    assert.equal(h.player.snapshot(), null);
+    assert.equal(h.progress.length, 0);
+    h.prepared();
+    h.time(13000);
+    var calls = h.calls.length;
+    assert.doesNotThrow(function () { assertSnapshot(h.player.snapshot(), 13000, 0); });
+    var copy = h.player.snapshot();
+    copy.positionMs = 999999;
+    copy.playedSinceSeekMs = 999999;
+    copy.ended = true;
+    assertSnapshot(h.player.snapshot(), 13000, 0);
+    assert.equal(h.calls.length, calls, "Snapshots never query the native player");
+    [0, NaN, Infinity].forEach(function (duration) {
+      h.player.duration = duration;
+      assert.equal(h.player.snapshot(), null);
+    });
+    h.player.duration = 1800000;
+    var saved = h.player.snapshot();
+    h.player.stop(false);
+    assert.equal(h.player.snapshot(), null);
+    assert.equal(h.stops.length, 0);
+    assertSnapshot(saved, 13000, 0);
+  });
+});
+
+test("time events checkpoint at most every 15 seconds without polling or extra timers", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    h.start();
+    h.prepared();
+    var timers = h.timerCount();
+    h.time(0);
+    assertSnapshot(h.progress[0], 0, 0);
+    assert.equal(h.timerCount(), timers);
+    for (var second = 1; second < 15; second++) {
+      h.tick(1000);
+      h.time(second * 1000);
+    }
+    h.tick(999);
+    h.time(14999);
+    assert.equal(h.progress.length, 1);
+    h.tick(1);
+    h.time(15000);
+    assert.equal(h.progress.length, 2);
+    assertSnapshot(h.progress[1], 15000, 15000);
+    h.tick(60000);
+    assert.equal(h.progress.length, 2, "Wall time alone does not emit checkpoints");
+    h.time(16000);
+    assert.equal(h.progress.length, 3);
+  });
+});
+
+test("successful pauses checkpoint immediately and restart the event throttle", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    h.start();
+    h.prepared();
+    h.time(0);
+    h.tick(1000);
+    h.time(1000);
+    h.player.setPaused(true);
+    assert.equal(h.progress.length, 2);
+    assertSnapshot(h.progress[1], 1000, 1000);
+    h.player.setPaused(true);
+    assert.equal(h.progress.length, 2, "An already paused player does not checkpoint again");
+    h.player.setPaused(false);
+    h.tick(14999);
+    h.time(2000);
+    assert.equal(h.progress.length, 2);
+    h.tick(1);
+    h.time(3000);
+    assert.equal(h.progress.length, 3);
+  });
+});
+
+test("only adjacent forward playback up to five seconds contributes watched time", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    h.start();
+    h.prepared();
+    [100000, 101000, 106000, 106000, 112000, 110000, 111000].forEach(h.time);
+    assertSnapshot(h.player.snapshot(), 111000, 7000);
+    h.player.setPaused(true);
+    h.time(112000);
+    h.time(113000);
+    assertSnapshot(h.player.snapshot(), 113000, 7000);
+    h.player.setPaused(false);
+    h.time(114000);
+    h.time(115000);
+    assertSnapshot(h.player.snapshot(), 115000, 8000);
+    [NaN, Infinity, -1].forEach(h.time);
+    assertSnapshot(h.player.snapshot(), 115000, 8000);
+  });
+});
+
+test("successful seeks reset watched time only on completion and never checkpoint a preview", function () {
+  var h = harness();
+  h.start();
+  h.prepared();
+  h.time(100000);
+  h.time(101000);
+  h.player.seek(600000);
+  assertSnapshot(h.player.snapshot(), 101000, 1000);
+  h.time(102000);
+  assertSnapshot(h.player.snapshot(), 102000, 1000);
+  h.tick(250);
+  var calls = h.calls.length;
+  h.tick(15000);
+  h.time(103000);
+  assert.equal(h.calls.length, calls, "Time events during seekTo make no AVPlay calls");
+  assertSnapshot(h.progress.at(-1), 103000, 1000);
+  h.sought(0);
+  assertSnapshot(h.player.snapshot(), 701000, 0);
+  h.time(702000);
+  assertSnapshot(h.player.snapshot(), 702000, 1000);
+});
+
+test("deferred pauses checkpoint the successful or failed seek's confirmed position", function () {
+  [false, true].forEach(function (failed) {
+    var h = harness();
+    h.start();
+    h.prepared();
+    h.time(100000);
+    h.time(101000);
+    h.player.seek(10000);
+    h.tick(250);
+    h.time(102000);
+    var checkpoints = h.progress.length;
+    h.player.setPaused(true);
+    assert.equal(h.progress.length, checkpoints);
+    h.sought(0, failed);
+    assert.equal(h.state(), "PAUSED");
+    assert.equal(h.progress.length, checkpoints + 1);
+    assertSnapshot(h.progress.at(-1), failed ? 102000 : 111000, failed ? 1000 : 0);
+    h.time(failed ? 103000 : 112000);
+    assert.equal(h.player.snapshot().playedSinceSeekMs, failed ? 1000 : 0);
+  });
+});
+
+test("failed seeks preserve watched time and subsequent playback can accumulate again", function () {
+  var h = harness();
+  h.start();
+  h.prepared();
+  h.time(100000);
+  h.time(101000);
+  h.player.seek(10000);
+  h.tick(250);
+  h.time(102000);
+  h.sought(0, true);
+  assertSnapshot(h.player.snapshot(), 102000, 1000);
+  h.time(103000);
+  h.time(104000);
+  assertSnapshot(h.player.snapshot(), 104000, 2000);
+});
+
+test("HTML5 failed seek assignment preserves the confirmed position and watched time", function () {
+  var h = harness(true);
+  h.start();
+  h.prepared();
+  h.time(100000);
+  h.time(101000);
+  Object.defineProperty(h.video, "currentTime", {
+    get: function () { return 101; },
+    set: function () { throw new Error("seek unavailable"); }
+  });
+  h.player.seek(10000);
+  h.tick(250);
+  assertSnapshot(h.player.snapshot(), 101000, 1000);
+  assert.equal(h.video.onseeked, null);
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.stops.length, 0);
+});
+
+test("initial resume seeks confirm their target without counting the jump as playback", function () {
+  [false, true].forEach(function (failed) {
+    var h = harness();
+    h.start("resume", 120);
+    h.prepared();
+    h.time(0);
+    assert.equal(h.player.snapshot(), null, "Preparation includes the initial seek");
+    assert.equal(h.progress.length, 0);
+    h.sought(0, failed);
+    assertSnapshot(h.player.snapshot(), failed ? 0 : 120000, 0);
+    h.time(failed ? 0 : 121000);
+    h.time(failed ? 1000 : 122000);
+    assertSnapshot(h.player.snapshot(), failed ? 1000 : 122000, failed ? 1000 : 2000);
+  });
+});
+
+test("HTML5 resume and user seeks wait for seeked before confirming a position", function () {
+  var h = harness(true);
+  h.start("resume", 120);
+  h.video.seeking = true;
+  h.prepared();
+  assertSnapshot(h.player.snapshot(), 0, 0);
+  h.time(120000);
+  h.video.seeking = false;
+  h.video.onseeked();
+  h.time(121000);
+  assertSnapshot(h.player.snapshot(), 121000, 1000);
+  h.player.seek(10000);
+  h.tick(250);
+  assertSnapshot(h.player.snapshot(), 121000, 1000);
+  h.video.seeking = true;
+  h.time(131000);
+  assertSnapshot(h.player.snapshot(), 131000, 1000);
+  h.video.seeking = false;
+  h.video.onseeked();
+  assertSnapshot(h.player.snapshot(), 131000, 0);
+  h.time(132000);
+  assertSnapshot(h.player.snapshot(), 132000, 1000);
+});
+
+test("stop delivers the cached snapshot before reset and only natural completion marks ended", function () {
+  [false, true].forEach(function (html5) {
+    ["ended", "Back", "error"].forEach(function (reason) {
+      var h = harness(html5);
+      h.start();
+      h.prepared();
+      h.time(1799500);
+      h.time(1800500);
+      if (reason === "ended") {
+        if (html5) h.video.onended(); else h.av.listener.onstreamcompleted();
+      } else if (reason === "Back") h.player.handleKey(10009);
+      else if (html5) h.video.onerror(); else h.av.listener.onerror();
+      assertSnapshot(h.stopSnapshots[0], 1800500, 1000, reason === "ended");
+      assert.equal(h.stopReasons[0], reason === "ended" ? "ended" : undefined);
+      assert.equal(h.player.snapshot(), null);
+    });
+  });
+});
+
+test("unready stops and prepare timeouts have null snapshots and no progress", function () {
+  [false, true].forEach(function (html5) {
+    ["Back", "error", "timeout"].forEach(function (mode) {
+      var h = harness(html5);
+      h.start();
+      h.time(12000);
+      if (mode === "Back") h.player.handleKey(10009);
+      else if (mode === "timeout") h.tick(45000);
+      else if (html5) h.video.onerror(); else h.prepares[0].failure();
+      assert.deepEqual(h.stopSnapshots, [null]);
+      assert.deepEqual(h.stopReasons, [undefined]);
+      assert.equal(h.progress.length, 0);
+    });
+  });
+});
+
+test("Back during a pending seek delivers the last time event, never its target", function () {
+  var h = harness();
+  h.start();
+  h.prepared();
+  h.time(100000);
+  h.time(101000);
+  h.player.seek(600000);
+  h.tick(250);
+  h.time(102000);
+  var calls = h.calls.length;
+  h.player.handleKey(10009);
+  assertSnapshot(h.stopSnapshots[0], 102000, 1000);
+  assert.equal(h.calls.length, calls);
+  h.sought(0);
+  assertSnapshot(h.stopSnapshots[0], 102000, 1000);
+  assert.equal(h.player.snapshot(), null);
+});
+
+test("replacement resets watched time and throttle; stale events cannot update either", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    h.start("first");
+    h.prepared();
+    h.time(100000);
+    h.time(101000);
+    var time = html5 ? h.video.ontimeupdate : h.av.listener.oncurrentplaytime;
+    var ended = html5 ? h.video.onended : h.av.listener.onstreamcompleted;
+    h.start("second");
+    h.prepared();
+    assertSnapshot(h.player.snapshot(), 0, 0);
+    h.time(0);
+    assert.equal(h.progress.length, 2, "The replacement can checkpoint immediately");
+    h.tick(15000);
+    time(999999);
+    ended();
+    assertSnapshot(h.player.snapshot(), 0, 0);
+    assert.equal(h.progress.length, 2);
+    assert.equal(h.stops.length, 0);
+    h.time(1000);
+    assertSnapshot(h.progress.at(-1), 1000, 1000);
+  });
+});
+
+test("stale seek callbacks cannot reset or checkpoint a replacement launch", function () {
+  var h = harness();
+  h.start("first");
+  h.prepared();
+  h.time(100000);
+  h.player.seek(10000);
+  h.tick(250);
+  h.player.setPaused(true);
+  h.start("second");
+  h.sought(0);
+  h.prepared();
+  h.time(0);
+  h.time(1000);
+  h.tick(15000);
+  var checkpoints = h.progress.length;
+  h.seeks[0].success();
+  h.seeks[0].failure();
+  h.prepares[0].listener.oncurrentplaytime(120000);
+  assertSnapshot(h.player.snapshot(), 1000, 1000);
+  assert.equal(h.progress.length, checkpoints);
+  assert.equal(h.count("pause"), 0);
+});
+
+test("throwing checkpoint callbacks cannot stop playback or break later checkpoints", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    var attempts = 0;
+    h.player.options.onProgress = function () { attempts++; throw new Error("storage unavailable"); };
+    h.start();
+    h.prepared();
+    assert.doesNotThrow(function () { h.time(0); });
+    assert.doesNotThrow(function () { h.player.setPaused(true); });
+    assert.equal(h.state(), "PAUSED");
+    assert.equal(h.stops.length, 0);
+    h.player.setPaused(false);
+    h.tick(15000);
+    assert.doesNotThrow(function () { h.time(1000); });
+    assert.equal(attempts, 3);
+    assert.equal(h.state(), "PLAYING");
+    h.player.options.onProgress = null;
+    h.player.setPaused(true);
+    assert.equal(h.stops.length, 0);
+  });
+});
+
+test("failed pauses do not emit progress or mark the stop snapshot as ended", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    h.start();
+    h.prepared();
+    h.time(0);
+    h.time(1000);
+    var checkpoints = h.progress.length;
+    var source = html5 ? h.video : h.av;
+    var pause = source.pause;
+    source.pause = function () { source.pause = pause; throw new Error("pause unavailable"); };
+    assert.doesNotThrow(function () { h.player.setPaused(true); });
+    assert.equal(h.progress.length, checkpoints);
+    assertSnapshot(h.stopSnapshots[0], 1000, 1000);
+  });
+});
+
+test("missing stream URLs retain the existing onStop call without a snapshot", function () {
+  var h = harness();
+  h.player.start({});
+  assert.equal(h.stops.length, 1);
+  assert.equal(h.stopSnapshots[0], undefined);
+  assert.equal(h.player.snapshot(), null);
+});
 
 test("controls fade after playback starts and stay visible throughout pause", function () {
   var h = harness();

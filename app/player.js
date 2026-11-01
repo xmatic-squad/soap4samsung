@@ -20,6 +20,9 @@
     this.generation = 0;
     this.currentTime = 0;
     this.duration = 0;
+    this.playedSinceSeekMs = 0;
+    this.lastPlaybackTime = null;
+    this.lastProgressAt = null;
     this.seekBusy = false;
     this.seekTarget = null;
     this.seekHold = null;
@@ -70,6 +73,45 @@
     var displayTime = this.seekTarget === null ? this.currentTime : this.seekTarget;
     element('player-time').textContent = clock(displayTime) + ' / ' + clock(this.duration);
     element('player-progress').style.width = (this.duration ? Math.min(100, displayTime / this.duration * 100) : 0) + '%';
+  };
+
+  SoapPlayer.prototype.snapshot = function () {
+    // Until playback is ready, even a known duration is not a usable checkpoint.
+    if (!this.active || !this.ready || !isFinite(this.duration) || this.duration <= 0) return null;
+    return {
+      positionMs: this.currentTime,
+      durationMs: this.duration,
+      playedSinceSeekMs: this.playedSinceSeekMs,
+      ended: false
+    };
+  };
+
+  SoapPlayer.prototype._playbackTime = function (current) {
+    var time = Number(current);
+    if (!isFinite(time) || time < 0) return;
+    var playing = this.ready && !this.paused && !this.pendingSeek && !this.seekBusy && this.seekTarget === null &&
+      (this.av || !this.video.seeking);
+    var delta = this.lastPlaybackTime === null ? 0 : time - this.lastPlaybackTime;
+    if (playing && delta > 0 && delta <= 5000) this.playedSinceSeekMs += delta;
+    this.lastPlaybackTime = playing ? time : null;
+    this._time(time);
+  };
+
+  SoapPlayer.prototype._seeked = function (target) {
+    this.playedSinceSeekMs = 0;
+    this.lastPlaybackTime = target;
+    this._time(target);
+  };
+
+  SoapPlayer.prototype._progress = function (force) {
+    var snapshot = this.snapshot();
+    if (!snapshot) return;
+    var now = Date.now();
+    if (!force && this.lastProgressAt !== null && now - this.lastProgressAt < 15000) return;
+    this.lastProgressAt = now;
+    try {
+      if (this.options.onProgress) this.options.onProgress(snapshot);
+    } catch (ignored) { /* A checkpoint failure must not interrupt playback. */ }
   };
 
   SoapPlayer.prototype._updateQuality = function () {
@@ -215,8 +257,9 @@
           onbufferingcomplete: function () { if (current()) self._buffering(false); },
           oncurrentplaytime: function (time) {
             if (!current()) return;
-            self._time(time);
+            self._playbackTime(time);
             self._updateQuality();
+            self._progress(false);
           },
           onstreamcompleted: function () { if (current()) self.stop(true, undefined, 'ended'); },
           onerror: fail,
@@ -243,7 +286,11 @@
                 self.showControls();
               } catch (error) { fail(); }
             };
-            if (resumeAt > 0 && resumeAt < self.duration - 3000) self._seekAv(Math.floor(resumeAt), play, play);
+            if (resumeAt > 0 && resumeAt < self.duration - 3000) self._seekAv(Math.floor(resumeAt), function () {
+              if (!current()) return;
+              self._seeked(Math.floor(resumeAt));
+              play();
+            }, play);
             else play();
           } catch (error) { fail(); }
         }, fail);
@@ -254,7 +301,14 @@
       this.video.onloadedmetadata = function () {
         if (!current()) return;
         self.duration = Number(self.video.duration) * 1000 || 0;
-        if (resumeAt > 0 && resumeAt < self.duration - 3000) self.video.currentTime = resumeAt / 1000;
+        if (resumeAt > 0 && resumeAt < self.duration - 3000) {
+          self.video.onseeked = function () {
+            if (!current()) return;
+            self.video.onseeked = null;
+            self._seeked(self.video.currentTime * 1000);
+          };
+          self.video.currentTime = resumeAt / 1000;
+        }
         for (var i = 0; i < self.video.textTracks.length; i++) self.video.textTracks[i].mode = 'disabled';
       };
       this.video.onplaying = function () {
@@ -269,8 +323,9 @@
       this.video.onwaiting = function () { if (current()) self._buffering(true); };
       this.video.ontimeupdate = function () {
         if (!current()) return;
-        self._time(self.video.currentTime * 1000);
+        self._playbackTime(self.video.currentTime * 1000);
         self._updateQuality();
+        self._progress(false);
       };
       this.video.onended = function () { if (current()) self.stop(true, undefined, 'ended'); };
       this.video.onerror = fail;
@@ -307,9 +362,11 @@
         }
       }
       this.paused = paused;
+      this.lastPlaybackTime = null;
       this._screenSaver(paused);
       element('player-state').textContent = paused ? 'Пауза' : 'Воспроизведение';
       this.showControls();
+      if (paused) this._progress(true);
     } catch (error) { this.stop(true, 'Плеер не отвечает. Откройте видео ещё раз.'); }
   };
 
@@ -319,6 +376,7 @@
     var generation = this.generation;
     var from = this.seekTarget === null ? this.currentTime : this.seekTarget;
     this.seekTarget = Math.max(0, Math.min(this.duration - 1000, from + delta));
+    this.lastPlaybackTime = null;
     this._time(this.currentTime);
     this.showControls();
     clearTimeout(this.seekTimer);
@@ -332,19 +390,27 @@
         if (!self.active || self.generation !== generation) return;
         self.seekBusy = false;
         if (self.seekTarget === target) self.seekTarget = null;
-        self._time(target);
+        self._seeked(target);
       };
       var failed = function () {
         if (!self.active || self.generation !== generation) return;
         self.resetHold();
         self.seekBusy = false;
         self.seekTarget = null;
+        if (!self.av) self.video.onseeked = null;
         self._time(self.currentTime);
         if (self.options.onNotice) self.options.onNotice('Перемотка пока недоступна. Попробуйте ещё раз.');
       };
       try {
         if (self.av) self._seekAv(Math.floor(target), done, failed);
-        else { self.video.currentTime = target / 1000; done(); }
+        else {
+          self.video.onseeked = function () {
+            if (!self.active || self.generation !== generation) return;
+            self.video.onseeked = null;
+            done();
+          };
+          self.video.currentTime = target / 1000;
+        }
       } catch (error) { failed(); }
     };
     this.seekTimer = setTimeout(applySeek, 250);
@@ -402,6 +468,8 @@
 
   SoapPlayer.prototype.stop = function (notify, message, reason) {
     this.resetHold();
+    var snapshot = this.snapshot();
+    if (snapshot) snapshot.ended = reason === 'ended';
     var wasActive = this.active;
     this.generation++;
     this.controlsRevision++;
@@ -414,6 +482,9 @@
     this.queuedStart = null;
     this.duration = 0;
     this.currentTime = 0;
+    this.playedSinceSeekMs = 0;
+    this.lastPlaybackTime = null;
+    this.lastProgressAt = null;
     clearTimeout(this.controlsTimer);
     clearTimeout(this.prepareTimer);
     clearTimeout(this.seekTimer);
@@ -425,6 +496,7 @@
     this.video.onplaying = null;
     this.video.onwaiting = null;
     this.video.ontimeupdate = null;
+    this.video.onseeked = null;
     this.video.onended = null;
     this.video.onerror = null;
     if (!this.av && wasActive) {
@@ -434,7 +506,7 @@
     }
     element('player-view').hidden = true;
     this._screenSaver(true);
-    if (notify && this.options.onStop) this.options.onStop(message, reason);
+    if (notify && this.options.onStop) this.options.onStop(message, reason, snapshot);
   };
 
   global.SoapPlayer = SoapPlayer;
