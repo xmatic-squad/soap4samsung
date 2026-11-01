@@ -434,29 +434,30 @@
     card.contextAction = function () { openContext(card, [{label: favoriteLabel(kind, show), action: function () { toggleFavorite(kind, show); }}]); };
     card.setAttribute('aria-label', title(show));
     card.appendChild(poster(show.covers && show.covers.small, title(show).slice(0, 1)));
-    var ratings = ratingBadges(show);
-    if (ratings) card.appendChild(ratings);
-    var flags = [];
-    if (store.isFavorite(kind, isMovie ? show.id : show.sid)) flags.push('★');
-    if (isMovie ? store.effectiveWatched(movieMedia(show), show.watched) : show.unwatched !== undefined && store.adjustedUnwatched(show) === 0) flags.push('✓');
-    if (flags.length) card.appendChild(node('span', 'card-flags', flags.join(' ')));
     var copy = node('span', 'show-copy');
     copy.appendChild(node('span', 'show-title', title(show)));
+    if (continued) {
+      var record = continued.record;
+      if (!isMovie) copy.appendChild(node('span', 'show-meta', (record.status === 'watched' ? 'После ' : '') + 'S' + continued.media.season + 'E' + continued.media.episode));
+      copy.appendChild(node('span', 'show-meta', record.status === 'watched' ? 'Следующая серия' : 'Осталось ' + Math.ceil((record.durationMs - record.positionMs) / 60000) + ' мин'));
+      card.appendChild(copy);
+      appendProgress(card, record);
+      return card;
+    }
+    var ratings = ratingBadges(show);
+    if (ratings) card.appendChild(ratings);
+    var flags = node('span', 'card-flags');
+    // In Favorites every card is a favorite, so the mark would only add noise.
+    if (state.tab !== 'my' && store.isFavorite(kind, isMovie ? show.id : show.sid)) flags.appendChild(node('span', 'card-flag flag-favorite'));
+    if (isMovie ? store.effectiveWatched(movieMedia(show), show.watched) : show.unwatched !== undefined && store.adjustedUnwatched(show) === 0) flags.appendChild(node('span', 'card-flag flag-watched'));
+    if (flags.firstChild) card.appendChild(flags);
     var meta = [];
     var count = isMovie ? 0 : store.adjustedUnwatched(show);
-    if (!continued) {
-      if (show.year) meta.push(show.year);
-      if (count) meta.push('Новых: ' + count);
-    }
-    var record = isMovie ? store.get(movieMedia(show)) : store.nextEpisodeLabel(showId(show));
-    if (continued) {
-      record = continued.record;
-      if (!isMovie) meta.push((record.status === 'watched' ? 'После ' : '') + 'S' + continued.media.season + 'E' + continued.media.episode);
-      if (record.status === 'progress' && record.durationMs > record.positionMs) meta.push('осталось ' + Math.ceil((record.durationMs - record.positionMs) / 60000) + ' мин');
-    }
+    if (show.year) meta.push(show.year);
+    if (count) meta.push('Новых: ' + count);
     copy.appendChild(node('span', 'show-meta', meta.join(' · ')));
     card.appendChild(copy);
-    appendProgress(card, record);
+    appendProgress(card, isMovie ? store.get(movieMedia(show)) : store.nextEpisodeLabel(showId(show)));
     return card;
   }
   function flushLibrary() {
@@ -481,7 +482,7 @@
       return entry;
     }).filter(function (entry) {
       return entry.record.status !== 'watched' || store.adjustedUnwatched(entry.card) > 0;
-    }).slice(0, 6) : [];
+    }).slice(0, 4) : [];
     var info = pageInfo(shows.length, data.page, continued.length ? 14 : PAGE_SIZE);
     data.page = info.page;
     data.pageInfo = info;
@@ -570,7 +571,8 @@
   function artwork(show, className, covers) {
     var item = node('div', className);
     covers = covers || show.covers;
-    item.appendChild(poster(covers && covers.small, title(show).slice(0, 1)));
+    // A single detail poster can afford the sharp cover; grids stay on small ones.
+    item.appendChild(poster(covers && (covers.big || covers.small), title(show).slice(0, 1)));
     var ratings = ratingBadges(show);
     if (ratings) item.appendChild(ratings);
     return item;
@@ -581,12 +583,12 @@
     var saved = store.get(media);
     clear(el('content'));
     clear(el('pagination'));
-    el('section-summary').textContent = (movie.year || '') + (store.effectiveWatched(media, movie.watched) ? ' · Просмотрено ✓' : '');
+    el('section-summary').textContent = (movie.year || '') + (store.effectiveWatched(media, movie.watched) ? ' · Просмотрено' : '');
     var layout = node('div', 'movie-layout');
     layout.appendChild(artwork(movie, 'movie-artwork'));
     var info = node('div', 'movie-info');
     var actions = node('div', 'movie-actions');
-    actions.appendChild(button(store.resumeMs(media, 0) ? '▶ Продолжить' : '▶ Смотреть', 'primary-button', function () { playMovie(false); }, 'movie-play'));
+    actions.appendChild(button(store.resumeMs(media, 0) ? 'Продолжить' : 'Смотреть', 'primary-button play-button', function () { playMovie(false); }, 'movie-play'));
     if (saved && saved.positionMs > 0) actions.appendChild(button('Сначала', '', function () { playMovie(true); }, 'movie-restart'));
     actions.appendChild(button(favoriteLabel('movie', movie), '', function () { toggleFavorite('movie', movie); }, 'detail-favorite'));
     actions.appendChild(button(store.effectiveWatched(media, movie.watched) ? 'Снять отметку' : 'Отметить просмотренным', '', function () {
@@ -640,13 +642,13 @@
     var layout = node('div', 'show-layout');
     var aside = node('div', 'show-artwork');
     aside.appendChild(artwork(detail.show, 'detail-poster', allInSeason[0] && allInSeason[0].covers));
-    aside.appendChild(node('p', 'detail-meta', (store.isFavorite('show', showId(detail.show)) ? '★ · ' : '') + (detail.show.year || '')));
+    aside.appendChild(node('p', 'detail-meta', detail.show.year || ''));
     layout.appendChild(aside);
     var info = node('div', 'show-info');
     var actions = node('div', 'show-actions');
     var next = detail.next;
-    var label = next ? (store.resumeMs(episodeMedia(next), 0) ? '▶ Продолжить ' : '▶ Смотреть ') + 'S' + next.season + 'E' + next.episode : '▶ Смотреть';
-    var play = button(label, 'primary-button', function () {
+    var label = next ? (store.resumeMs(episodeMedia(next), 0) ? 'Продолжить ' : 'Смотреть ') + 'S' + next.season + 'E' + next.episode : 'Смотреть';
+    var play = button(label, 'primary-button play-button', function () {
       if (!next) return;
       detail.season = String(next.season);
       var episodes = selectedEpisodes('season');
@@ -693,7 +695,7 @@
       var copy = node('span', 'episode-copy');
       copy.appendChild(node('span', 'episode-title', episodeTitle(episode)));
       var metadata = node('span', 'episode-details');
-      metadata.appendChild(node('span', 'episode-status', watched(episode) ? '✓' : file ? '▶' : 'нет озвучки'));
+      metadata.appendChild(watched(episode) ? node('span', 'episode-status status-watched') : file ? node('span', 'episode-status status-playable') : node('span', 'episode-status', 'нет озвучки'));
       if (file) metadata.appendChild(node('span', 'episode-meta', qualityLabel(file)));
       copy.appendChild(metadata);
       item.appendChild(copy);

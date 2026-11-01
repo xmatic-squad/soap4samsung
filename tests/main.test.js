@@ -358,7 +358,7 @@ test("natural ends persist each immutable media before requesting and starting t
   var mark = writes.find(function (entry) { return JSON.parse(entry.value).episodes["1:1"]; });
   var secondStart = h.timeline.filter(function (entry) { return entry.type === "start"; })[1];
   assert.ok(h.timeline.indexOf(mark) < h.timeline.indexOf(secondStart));
-  assert.equal(h.element("content").querySelectorAll(".episode-status").filter(function (item) { return item.textContent === "✓"; }).length, 2);
+  assert.equal(h.element("content").querySelectorAll(".status-watched").length, 2);
 });
 
 test("Back, Home and player errors save confirmed positions without auto advance", async function () {
@@ -444,7 +444,7 @@ test("bulk and single undo are local and override service watched flags", async 
   h.key(40); h.key(13); h.release(13);
   assert.equal(h.store().effectiveWatched(media(1), 1), false);
   assert.equal(h.store().adjustedUnwatched(SHOWS[0]), 3);
-  assert.equal(h.byFocus("episode-1-1").querySelector(".episode-status").textContent, "▶");
+  assert.ok(h.byFocus("episode-1-1").querySelector(".status-playable"));
   h.byFocus("show-more").click();
   h.element("mark-season").click();
   assert.equal(h.store().effectiveWatched(media(1), 1), true);
