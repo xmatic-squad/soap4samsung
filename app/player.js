@@ -81,7 +81,8 @@
     return {
       positionMs: this.currentTime,
       durationMs: this.duration,
-      playedSinceSeekMs: this.playedSinceSeekMs,
+      // Time events may report the destination before the seek completes.
+      playedSinceSeekMs: this.pendingSeek || this.seekBusy || this.seekTarget !== null ? 0 : this.playedSinceSeekMs,
       ended: false
     };
   };

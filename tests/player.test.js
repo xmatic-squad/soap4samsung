@@ -237,15 +237,15 @@ test("successful seeks reset watched time only on completion and never checkpoin
   h.time(100000);
   h.time(101000);
   h.player.seek(600000);
-  assertSnapshot(h.player.snapshot(), 101000, 1000);
+  assertSnapshot(h.player.snapshot(), 101000, 0);
   h.time(102000);
-  assertSnapshot(h.player.snapshot(), 102000, 1000);
+  assertSnapshot(h.player.snapshot(), 102000, 0);
   h.tick(250);
   var calls = h.calls.length;
   h.tick(15000);
   h.time(103000);
   assert.equal(h.calls.length, calls, "Time events during seekTo make no AVPlay calls");
-  assertSnapshot(h.progress.at(-1), 103000, 1000);
+  assertSnapshot(h.progress.at(-1), 103000, 0);
   h.sought(0);
   assertSnapshot(h.player.snapshot(), 701000, 0);
   h.time(702000);
@@ -337,10 +337,10 @@ test("HTML5 resume and user seeks wait for seeked before confirming a position",
   assertSnapshot(h.player.snapshot(), 121000, 1000);
   h.player.seek(10000);
   h.tick(250);
-  assertSnapshot(h.player.snapshot(), 121000, 1000);
+  assertSnapshot(h.player.snapshot(), 121000, 0);
   h.video.seeking = true;
   h.time(131000);
-  assertSnapshot(h.player.snapshot(), 131000, 1000);
+  assertSnapshot(h.player.snapshot(), 131000, 0);
   h.video.seeking = false;
   h.video.onseeked();
   assertSnapshot(h.player.snapshot(), 131000, 0);
@@ -394,10 +394,10 @@ test("Back during a pending seek delivers the last time event, never its target"
   h.time(102000);
   var calls = h.calls.length;
   h.player.handleKey(10009);
-  assertSnapshot(h.stopSnapshots[0], 102000, 1000);
+  assertSnapshot(h.stopSnapshots[0], 102000, 0);
   assert.equal(h.calls.length, calls);
   h.sought(0);
-  assertSnapshot(h.stopSnapshots[0], 102000, 1000);
+  assertSnapshot(h.stopSnapshots[0], 102000, 0);
   assert.equal(h.player.snapshot(), null);
 });
 
@@ -986,4 +986,18 @@ test("failed seeks retain playback, apply requested pause, and allow another see
   assert.equal(h.seeks.length, 2);
   h.sought(1);
   assert.equal(h.state(), "PAUSED");
+});
+
+test("a time event at the seek destination cannot combine with time played before the seek", function () {
+  [false, true].forEach(function (html5) {
+    var h = harness(html5);
+    h.start();
+    h.prepared();
+    for (var position = 1000; position <= 40000; position += 1000) h.time(position);
+    h.player.seek(1700000);
+    h.time(1741000);
+    assert.equal(h.player.snapshot().playedSinceSeekMs, 0);
+    h.player.stop(true);
+    assert.equal(h.stopSnapshots[h.stopSnapshots.length - 1].playedSinceSeekMs, 0);
+  });
 });

@@ -694,3 +694,13 @@ test("context selection consumes held OK until release, including remotes withou
   assert.equal(h.store().isFavorite("show", 1), false);
   h.release(13);
 });
+
+test("finished shows do not take Continue slots from an older unfinished show", function () {
+  var shows = Array.from({length: 8}, function (_, index) { return {sid: index + 1, title: "Show " + (index + 1), unwatched: 0}; });
+  var h = harness({saved: localData(function (store) {
+    store.importFavoritesOnce(shows);
+    store.saveProgress(media(1, 2), {positionMs: 90000, durationMs: 1200000}, shows[0]);
+    shows.slice(1).forEach(function (show) { store.setEpisodesWatched(show.sid, episodes(1), true, show); });
+  })});
+  assert.ok(h.byFocus("continue-show-1"));
+});

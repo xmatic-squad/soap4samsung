@@ -30,6 +30,7 @@
   var loginDestination = null;
   var store;
   var currentMedia = null;
+  var freshShows = {};
   var writeErrorShown = false;
   var showPositions = {};
   var moviesFilter = storageGet('soap4samsung.movies-filter') === 'favorites';
@@ -357,9 +358,12 @@
       shows = Array.isArray(shows) ? shows : [];
       if (tab === 'my') store.importFavoritesOnce(shows);
       store.refreshCards(tab === 'movies' ? 'movie' : 'show', shows);
+      if (tab !== 'movies') shows.forEach(function (show) {
+        if (tab === 'my' || !freshShows[show.sid] || show.unwatched !== undefined) freshShows[show.sid] = show;
+      });
       data.shows = sortShows(tab === 'my' ? store.favorites('show') : shows, tab);
       if (generation !== requestGeneration || state.tab !== tab || state.detail) return;
-      if (player.active || playPending || sortTrigger || keyboard.active) { data.backgroundReady = true; return; }
+      if (player.active || playPending || sortTrigger || okHold || keyboard.active) { data.backgroundReady = true; return; }
       var activeKey = document.activeElement && document.activeElement.getAttribute('data-focus');
       var keepFocus = !!el('content').querySelector('.show-grid') || !!activeKey;
       renderShows(activeKey || restoreFocus, keepFocus);
@@ -471,9 +475,13 @@
     var shows = sortShows(data.shows || [], tab).filter(function (show) {
       return window.SoapCatalog.matches(show, query) && (tab !== 'movies' || !moviesFilter || store.isFavorite('movie', show.id));
     });
-    var continued = !query && (tab === 'my' || tab === 'movies') ? store.continueList(tab === 'movies' ? 'movie' : 'show', 6).filter(function (entry) {
+    var continued = !query && (tab === 'my' || tab === 'movies') ? store.continueList(tab === 'movies' ? 'movie' : 'show').map(function (entry) {
+      // Snapshots date from playback; a loaded catalog has the current counts.
+      if (tab === 'my' && freshShows[entry.card.sid]) entry.card = freshShows[entry.card.sid];
+      return entry;
+    }).filter(function (entry) {
       return entry.record.status !== 'watched' || store.adjustedUnwatched(entry.card) > 0;
-    }) : [];
+    }).slice(0, 6) : [];
     var info = pageInfo(shows.length, data.page, continued.length ? 14 : PAGE_SIZE);
     data.page = info.page;
     data.pageInfo = info;
@@ -519,8 +527,7 @@
   }
   function openShow(show, fromContinue) {
     var generation = ++requestGeneration;
-    var catalogShow = (state.all.shows || []).filter(function (item) { return String(item.sid) === String(show.sid); })[0];
-    if (catalogShow) show = catalogShow;
+    if (freshShows[show.sid]) show = freshShows[show.sid];
     var remembered = showPositions[String(showId(show))];
     state.detail = { kind: 'show', show: show, episodes: null, seasons: [], season: null, page: 0, afterCompleted: !!fromContinue };
     libraryHeading();
@@ -560,9 +567,10 @@
     renderMovie();
   }
 
-  function artwork(show, className) {
+  function artwork(show, className, covers) {
     var item = node('div', className);
-    item.appendChild(poster(show.covers && show.covers.small, title(show).slice(0, 1)));
+    covers = covers || show.covers;
+    item.appendChild(poster(covers && covers.small, title(show).slice(0, 1)));
     var ratings = ratingBadges(show);
     if (ratings) item.appendChild(ratings);
     return item;
@@ -631,7 +639,7 @@
     var fragment = document.createDocumentFragment();
     var layout = node('div', 'show-layout');
     var aside = node('div', 'show-artwork');
-    aside.appendChild(artwork(detail.show, 'detail-poster'));
+    aside.appendChild(artwork(detail.show, 'detail-poster', allInSeason[0] && allInSeason[0].covers));
     aside.appendChild(node('p', 'detail-meta', (store.isFavorite('show', showId(detail.show)) ? '★ · ' : '') + (detail.show.year || '')));
     layout.appendChild(aside);
     var info = node('div', 'show-info');
@@ -875,6 +883,7 @@
       api.setToken('');
       storageSet(TOKEN_KEY, null);
       state.my.shows = state.all.shows = state.movies.shows = null;
+      freshShows = {};
       state.detail = null;
       showLogin();
     }); }, 'settings-logout');
@@ -1082,6 +1091,7 @@
         var hold = okHold;
         cancelOK();
         if (!hold.opened && document.activeElement === hold.item) hold.item.click();
+        flushLibrary();
       }
       if (code === 13 || code === 32) sortEnterDown = false;
       if (code === 27 || code === 10009) backDown = false;
