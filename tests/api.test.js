@@ -180,57 +180,6 @@ test("invalid inputs and missing session are rejected before a network request",
   assert.equal(requests.length, 0);
 });
 
-test("bulk watched marks target episodes, preserve special season zero and require explicit success", async function (t) {
-  var requests = fakeTransport(t, [{body: {ok: 1}}, {body: {ok: "1"}}, {body: {ok: 1}}]);
-  var api = new SoapApi({baseUrl: "/api/v2", token: "fixture-session"});
-  assert.deepEqual(await api.markShowWatched("425"), {ok: 1});
-  assert.deepEqual(await api.markSeasonWatched("425", "2"), {ok: "1"});
-  assert.deepEqual(await api.markSeasonWatched(425, 0), {ok: 1});
-  assert.deepEqual(requests.map(function (request) {
-    return {method: request.method, url: request.url, body: request.body};
-  }), [
-    {method: "POST", url: "/api/v2/episodes/watch/full/425/", body: "sid=425"},
-    {method: "POST", url: "/api/v2/episodes/watch/full/425/2/", body: "sid=425&season=2"},
-    {method: "POST", url: "/api/v2/episodes/watch/full/425/0/", body: "sid=425&season=0"}
-  ]);
-  requests.forEach(function (request) {
-    assert.equal(request.headers["X-API-TOKEN"], "fixture-session");
-    assert.equal(request.withCredentials, true);
-    assert.match(request.headers["Content-Type"], /^application\/x-www-form-urlencoded/);
-  });
-});
-
-test("bulk marks reject ambiguous success, service failure and expired authentication", async function (t) {
-  fakeTransport(t, [
-    {body: {message: "done"}}, {body: {ok: 0, msg: "private-server-detail"}},
-    {status: 401, body: {ok: 0, code: 401}}, {body: []}
-  ]);
-  var api = new SoapApi({token: "fixture-session"});
-  await assert.rejects(api.markShowWatched(425), {code: "INVALID_RESPONSE"});
-  await assert.rejects(api.markSeasonWatched(425, 2), function (error) {
-    assert.equal(error.code, "API_ERROR");
-    assert.doesNotMatch(error.message, /private-server-detail/);
-    return true;
-  });
-  await assert.rejects(api.markShowWatched(425), {code: "AUTH_REQUIRED"});
-  await assert.rejects(api.markSeasonWatched(425, 2), {code: "INVALID_RESPONSE"});
-});
-
-test("bulk marks reject unsafe or missing identifiers without sending mutations", async function (t) {
-  var requests = fakeTransport(t, []);
-  var api = new SoapApi({token: "fixture-session"});
-  for (var sid of [null, undefined, "", 0, -1, 1.5, "1/2", "1?sid=2", true, {}, 1e20]) {
-    await assert.rejects(api.markShowWatched(sid), {code: "BAD_INPUT"});
-    await assert.rejects(api.markSeasonWatched(sid, 1), {code: "BAD_INPUT"});
-  }
-  for (var season of [null, undefined, "", -1, 0.5, "2/3", false, {}]) {
-    await assert.rejects(api.markSeasonWatched(425, season), {code: "BAD_INPUT"});
-  }
-  api.setToken("");
-  await assert.rejects(api.markShowWatched(425), {code: "AUTH_REQUIRED"});
-  assert.equal(requests.length, 0);
-});
-
 function moviePage(mid, stream) {
   return '<form action="/logout" method="post" id="exit"></form><script>' +
     'window.movieFixtureExecuted = true; cache["movie_player_' + mid + '"] = new Playerjs({' +

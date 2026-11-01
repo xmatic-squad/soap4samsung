@@ -278,8 +278,8 @@ class PreviewMockTests(unittest.TestCase):
         # transport is stubbed only to avoid adding a Node XHR dependency.
         responses = {}
         for route in ("/auth/", "/auth/check/", "/soap/my/", "/soap/", "/movies/", "/episodes/1/",
-                      "/play/episode/101014/", "/episodes/watch/full/1/1/", "/episodes/watch/full/1/"):
-            method = "POST" if route in ("/auth/", "/play/episode/101014/", "/episodes/watch/full/1/1/", "/episodes/watch/full/1/") else "GET"
+                      "/play/episode/101014/"):
+            method = "POST" if route in ("/auth/", "/play/episode/101014/") else "GET"
             responses[route] = self.api(route, method, "login=fictional&password=anything" if route == "/auth/" else None)
         responses["site/login/"] = self.request("/site/login/", "POST", "login=fictional&password=anything")[2].decode()
         responses["site/movies/1/"] = self.request("/site/movies/1/")[2].decode()
@@ -314,8 +314,6 @@ api._request = function (method, path, form, anonymous, transport) {
   assert.equal(chosen.quality, 4);
   assert.equal(api.chooseRussianFile(episodes.find(item => item.episode === 5).files), null);
   assert.equal((await api.getPlayback(1, chosen)).ok, 1);
-  await api.markSeasonWatched(1, 1);
-  await api.markShowWatched(1);
   await assert.rejects(api.getMoviePlayback(1), {code: "MOCK_NO_HLS"});
   assert.equal(parsedMovie, true);
 }()).catch(() => { console.error("Mock API client compatibility failed"); process.exitCode = 1; });

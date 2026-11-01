@@ -348,13 +348,6 @@
       Number(value) >= (allowZero ? 0 : 1) && Number(value) <= 9007199254740991;
   }
 
-  function requireMarked(response) {
-    if (!response || (response.ok !== 1 && response.ok !== "1")) {
-      throw apiError("INVALID_RESPONSE", "Сервис не подтвердил отметку просмотра.");
-    }
-    return response;
-  }
-
   SoapApi.prototype.checkAuth = function () {
     return this._request("GET", "/auth/check/").then(function (response) {
       if (Number(response.logged) !== 1 && Number(response.loged) !== 1) {
@@ -382,16 +375,6 @@
         });
       });
     });
-  };
-  SoapApi.prototype.markShowWatched = function (sid) {
-    if (!validNumber(sid, false)) return Promise.reject(apiError("BAD_INPUT", "Не выбран сериал."));
-    return this._request("POST", "/episodes/watch/full/" + String(sid) + "/", {sid: sid}).then(requireMarked);
-  };
-  SoapApi.prototype.markSeasonWatched = function (sid, season) {
-    if (!validNumber(sid, false) || !validNumber(season, true)) {
-      return Promise.reject(apiError("BAD_INPUT", "Не выбран сезон сериала."));
-    }
-    return this._request("POST", "/episodes/watch/full/" + String(sid) + "/" + String(season) + "/", {sid: sid, season: season}).then(requireMarked);
   };
   SoapApi.prototype.getEpisodes = function (sid) {
     if (sid === undefined || sid === null || String(sid) === "") return Promise.reject(apiError("BAD_INPUT", "Не выбран сериал."));
