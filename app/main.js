@@ -439,9 +439,11 @@
     var copy = node('span', 'show-copy');
     copy.appendChild(node('span', 'show-title', title(show)));
     var meta = [];
-    if (show.year) meta.push(show.year);
     var count = isMovie ? 0 : store.adjustedUnwatched(show);
-    if (count) meta.push('Новых: ' + count);
+    if (!continued) {
+      if (show.year) meta.push(show.year);
+      if (count) meta.push('Новых: ' + count);
+    }
     var record = isMovie ? store.get(movieMedia(show)) : store.nextEpisodeLabel(showId(show));
     if (continued) {
       record = continued.record;
@@ -633,7 +635,6 @@
     aside.appendChild(node('p', 'detail-meta', (store.isFavorite('show', showId(detail.show)) ? '★ · ' : '') + (detail.show.year || '')));
     layout.appendChild(aside);
     var info = node('div', 'show-info');
-    info.appendChild(node('h2', 'detail-title', title(detail.show)));
     var actions = node('div', 'show-actions');
     var next = detail.next;
     var label = next ? (store.resumeMs(episodeMedia(next), 0) ? '▶ Продолжить ' : '▶ Смотреть ') + 'S' + next.season + 'E' + next.episode : '▶ Смотреть';
