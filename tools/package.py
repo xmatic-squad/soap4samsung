@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # here explicitly; ignored files and a developer's local config cannot leak in.
 PUBLIC_FILES = (
     "api.js", "catalog.js", "config.xml", "icon.png", "icon.svg", "index.html", "main.js",
-    "player.js", "keyboard.js", "styles.css",
+    "player.js", "keyboard.js", "store.js", "styles.css",
 )
 
 

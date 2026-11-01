@@ -26,6 +26,7 @@ certificates = load_tool("certificates")
 
 class PackageTests(unittest.TestCase):
     def test_only_public_assets_and_generated_version_enter_package(self):
+        self.assertIn("store.js", package.PUBLIC_FILES)
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / "app"
             stage = Path(directory) / "stage"
