@@ -50,8 +50,8 @@ nav button { margin-right: 14px; }
 .rating-kinopoisk .rating-source { color: #ffaf79; }
 .rating-soap .rating-source { color: var(--accent); }
 .rating-value { font-weight: 600; }
-.card-flags { position: absolute; top: 8px; right: 8px; display: flex; pointer-events: none; }
-.card-flag { display: block; width: 30px; height: 30px; margin-left: 6px; border-radius: 6px; background-color: rgba(9,13,17,.88); background-position: center; background-repeat: no-repeat; background-size: 20px 20px; }
+.card-flags { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; pointer-events: none; }
+.card-flag { display: block; width: 30px; height: 30px; margin-bottom: 6px; border-radius: 6px; background-color: rgba(9,13,17,.88); background-position: center; background-repeat: no-repeat; background-size: 20px 20px; }
 .flag-favorite { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5cf65' d='M12 2.6l2.9 6.2 6.7.8-5 4.6 1.4 6.7-6-3.4-6 3.4 1.4-6.7-5-4.6 6.7-.8z'/%3E%3C/svg%3E"); }
 .flag-watched, .status-watched { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b8edc8' d='M9.5 17.6L4.4 12.5l1.8-1.8 3.3 3.3 8.3-8.3 1.8 1.8z'/%3E%3C/svg%3E"); }
 .play-button::before { content: ''; display: inline-block; width: 22px; height: 22px; margin-right: 10px; vertical-align: -3px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%2314221b' d='M7 4.5v15l12.5-7.5z'/%3E%3C/svg%3E") center / 22px 22px no-repeat; }
