@@ -13,13 +13,12 @@
     <header class="header">
       <div class="brand">soap<span>4</span>tv</div>
       <nav id="navigation" aria-label="Разделы" hidden>
-        <button id="nav-my" class="nav-button" type="button">Мои сериалы</button>
-        <button id="nav-all" class="nav-button" type="button">Каталог</button>
+        <button id="nav-my" class="nav-button" type="button">Избранное</button>
+        <button id="nav-all" class="nav-button" type="button">Сериалы</button>
         <button id="nav-movies" class="nav-button" type="button">Фильмы</button>
       </nav>
       <div id="account" class="account" hidden>
-        <button id="refresh" class="quiet-button" type="button">Обновить</button>
-        <button id="logout" class="quiet-button" type="button">Выйти</button>
+        <button id="nav-settings" class="nav-button" type="button">Настройки</button>
       </div>
     </header>
     <main id="main">
@@ -40,24 +39,29 @@
       </section>
       <section id="library-view" hidden>
         <div class="section-heading">
-          <div><h1 id="section-title">Мои сериалы</h1><p id="section-summary" class="muted"></p></div>
+          <div><h1 id="section-title">Избранное</h1><p id="section-summary" class="muted"></p></div>
           <div id="library-tools" class="library-tools">
             <button id="sort-my" class="sort-button" type="button" aria-haspopup="menu" aria-controls="sort-menu" aria-expanded="false" hidden>Сначала непросмотренные</button>
             <button id="sort-all" class="sort-button" type="button" aria-haspopup="menu" aria-controls="sort-menu" aria-expanded="false" hidden>По названию</button>
             <button id="sort-movies" class="sort-button" type="button" aria-haspopup="menu" aria-controls="sort-menu" aria-expanded="false" hidden>По году: новые</button>
-            <div id="sort-menu" class="sort-menu" role="menu" aria-label="Порядок каталога" hidden></div>
+            <button id="movies-filter" type="button" hidden>Все</button>
             <div id="search-box" class="search-box"><button id="search" class="search-button" type="button" aria-haspopup="dialog" aria-controls="search-keyboard">Поиск по названию</button></div>
-          </div>
-          <div id="detail-actions" class="detail-actions" hidden>
-            <button id="mark-season" class="mark-button" type="button" data-focus="mark-season">Отметить сезон просмотренным</button>
-            <button id="mark-show" class="mark-button" type="button" data-focus="mark-show">Отметить сериал просмотренным</button>
           </div>
         </div>
         <div id="content" aria-live="polite"></div>
         <div id="pagination" class="pagination"></div>
       </section>
     </main>
-    <footer id="footer" class="footer"><span>Стрелки — выбор · OK — открыть · Назад — вернуться</span><span>Русская озвучка<span id="app-version" hidden></span></span></footer>
+  </div>
+  <div id="sort-menu" class="sort-menu" role="menu" aria-label="Действия" hidden></div>
+  <div id="more-panel" class="more-overlay" role="dialog" aria-modal="true" aria-label="О сериале" hidden>
+    <div class="more-content">
+      <p id="more-description"></p>
+      <div id="detail-actions" class="detail-actions">
+        <button id="mark-season" type="button" data-focus="mark-season">Отметить сезон просмотренным</button>
+        <button id="mark-show" type="button" data-focus="mark-show">Отметить сериал просмотренным</button>
+      </div>
+    </div>
   </div>
   <div id="search-keyboard" class="keyboard-overlay" role="dialog" aria-modal="true" aria-labelledby="keyboard-title" hidden>
     <div class="keyboard-panel">
@@ -82,6 +86,7 @@
   <script src="config.local.js"></script>
   <script src="api.js"></script>
   <script src="catalog.js"></script>
+  <script src="store.js"></script>
   <script src="player.js"></script>
   <script src="keyboard.js"></script>
   <script src="main.js"></script>

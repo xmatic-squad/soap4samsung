@@ -1,12 +1,13 @@
 {
   "name": "soap4samsung",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "description": "Minimal Soap4me player for Samsung Tizen TV",
   "scripts": {
     "test": "node --test tests/*.test.js && python3 -m unittest discover -s tests -p '*_test.py'",
     "preview": "python3 tools/preview.py",
+    "preview:mock": "python3 tools/preview.py --mock",
     "build": "python3 tools/package.py"
   }
 }
