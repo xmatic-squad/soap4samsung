@@ -704,3 +704,14 @@ test("finished shows do not take Continue slots from an older unfinished show", 
   })});
   assert.ok(h.byFocus("continue-show-1"));
 });
+
+test("a zero unwatched count marks only shows the account is watching", function () {
+  var shows = [{sid: 1, title: "Started", unwatched: 0, watching: 1}, {sid: 2, title: "Unseen", unwatched: 0, watching: 0}];
+  var h = harness();
+  h.element("nav-all").click();
+  h.requests[h.requests.length - 1].resolve(shows);
+  return h.settle().then(function () {
+    assert.ok(h.byFocus("show-1").querySelector(".flag-watched"));
+    assert.equal(h.byFocus("show-2").querySelector(".flag-watched"), null);
+  });
+});

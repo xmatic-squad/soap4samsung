@@ -448,8 +448,9 @@
     if (ratings) card.appendChild(ratings);
     var flags = node('span', 'card-flags');
     // In Favorites every card is a favorite, so the mark would only add noise.
+    // The catalog reports unwatched 0 for shows nobody started: only watching ones count.
     if (state.tab !== 'my' && store.isFavorite(kind, isMovie ? show.id : show.sid)) flags.appendChild(node('span', 'card-flag flag-favorite'));
-    if (isMovie ? store.effectiveWatched(movieMedia(show), show.watched) : show.unwatched !== undefined && store.adjustedUnwatched(show) === 0) flags.appendChild(node('span', 'card-flag flag-watched'));
+    if (isMovie ? store.effectiveWatched(movieMedia(show), show.watched) : Number(show.watching) > 0 && store.adjustedUnwatched(show) === 0) flags.appendChild(node('span', 'card-flag flag-watched'));
     if (flags.firstChild) card.appendChild(flags);
     var meta = [];
     var count = isMovie ? 0 : store.adjustedUnwatched(show);

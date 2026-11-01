@@ -10,7 +10,7 @@
   var PREFIX = "soap4samsung.local.";
   var BUDGET = 1024 * 1024;
   var TEXT_FIELDS = ["title", "title_ru", "title_original", "soap", "soap_ru"];
-  var NUMBER_FIELDS = ["year", "imdb_rating", "kinopoisk_rating", "soap_rating", "unwatched", "runtime"];
+  var NUMBER_FIELDS = ["year", "imdb_rating", "kinopoisk_rating", "soap_rating", "unwatched", "watching", "runtime"];
 
   function object(value) { return value && typeof value === "object" && !Array.isArray(value); }
   function numeric(value) {
